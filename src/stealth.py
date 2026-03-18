@@ -16,6 +16,7 @@ This module adds:
 """
 
 import logging
+import platform
 import random
 import asyncio
 
@@ -26,21 +27,72 @@ from src.human import human_sleep, random_scroll
 
 log = logging.getLogger(__name__)
 
-# Curated list of recent Chrome user agents (rotate per session)
+def _detect_chrome_version() -> str:
+    """Detect installed Chrome major version to build matching user agents."""
+    import subprocess
+    import platform
+    import re
+
+    version = None
+    try:
+        if platform.system() == "Windows":
+            result = subprocess.run(
+                ["reg", "query",
+                 r"HKEY_CURRENT_USER\Software\Google\Chrome\BLBeacon",
+                 "/v", "version"],
+                capture_output=True, text=True, timeout=5,
+            )
+            match = re.search(r"(\d+)\.\d+\.\d+\.\d+", result.stdout)
+            if match:
+                version = match.group(1)
+        elif platform.system() == "Darwin":
+            result = subprocess.run(
+                ["/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+                 "--version"],
+                capture_output=True, text=True, timeout=5,
+            )
+            match = re.search(r"(\d+)\.\d+\.\d+\.\d+", result.stdout)
+            if match:
+                version = match.group(1)
+        else:
+            for cmd in ["google-chrome", "chromium-browser", "chromium"]:
+                try:
+                    result = subprocess.run(
+                        [cmd, "--version"],
+                        capture_output=True, text=True, timeout=5,
+                    )
+                    match = re.search(r"(\d+)\.\d+\.\d+\.\d+", result.stdout)
+                    if match:
+                        version = match.group(1)
+                        break
+                except FileNotFoundError:
+                    continue
+    except Exception:
+        pass
+
+    return version or "131"  # Fallback
+
+
+_CHROME_MAJOR = _detect_chrome_version()
+
+# Build user agents matching the installed Chrome version
 _USER_AGENTS = [
-    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (X11; Linux aarch64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+    f"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/{_CHROME_MAJOR}.0.0.0 Safari/537.36",
+    f"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/{_CHROME_MAJOR}.0.0.0 Safari/537.36",
+    f"Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/{_CHROME_MAJOR}.0.0.0 Safari/537.36",
 ]
 
-# Imperva/block detection keywords
+# Block detection: phrases that indicate an actual block page, not just
+# the presence of Imperva/Incapsula scripts (which are on every DVSA page).
 _BLOCK_SIGNALS = [
-    "imperva", "incapsula", "access denied",
-    "please verify you are a human", "bot detected",
-    "unusual traffic", "security check",
-    "automated access", "request blocked",
+    "access denied",
+    "please verify you are a human",
+    "bot detected",
+    "unusual traffic",
+    "automated access",
+    "request blocked",
+    "error code: 16",   # Imperva block error code
+    "incident id",      # Imperva block pages include an incident ID
 ]
 
 
@@ -84,9 +136,10 @@ async def create_browser(profile_name: str = "default") -> uc.Browser:
     config.add_argument("--window-size=1366,768")
     config.add_argument(f"--user-agent={ua}")
 
-    # Memory optimization for Pi
-    config.add_argument("--single-process")
-    config.add_argument("--js-flags=--max-old-space-size=256")
+    # Memory optimization (aggressive settings only on Linux/Pi)
+    if platform.system() == "Linux":
+        config.add_argument("--single-process")
+        config.add_argument("--js-flags=--max-old-space-size=256")
     config.add_argument("--disable-features=TranslateUI")
     config.add_argument("--disable-background-networking")
     config.add_argument("--disable-default-apps")
