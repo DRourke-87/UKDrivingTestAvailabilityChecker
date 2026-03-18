@@ -24,6 +24,7 @@ from src.config import (
 from src.stealth import (
     create_browser, inject_stealth_scripts,
     warm_session, handle_queueit, check_for_block,
+    _wait_for_page_ready,
 )
 from src.captcha import extract_and_solve_hcaptcha
 from src.human import human_sleep, human_click, human_type, random_scroll
@@ -109,15 +110,22 @@ async def check_for_earlier_slot() -> dict:
             return result
 
         await human_click(page, submit_btn)
-        await human_sleep(3, 6)
+        await human_sleep(4, 8)
+
+        # Log where we ended up after login for debugging
+        post_login_url = page.url or ""
+        log.info(f"Post-login URL: {post_login_url}")
+
+        if not await handle_queueit(page):
+            result["message"] = "Stuck in Queue-it after login"
+            return result
+
+        # Wait for the post-login page to load before checking for blocks
+        await human_sleep(2, 4)
 
         if await check_for_block(page):
             result["message"] = "WAF block after login submission"
             result["blocked"] = True
-            return result
-
-        if not await handle_queueit(page):
-            result["message"] = "Stuck in Queue-it after login"
             return result
 
         # ── Navigate to date change ─────────────────────────────────────

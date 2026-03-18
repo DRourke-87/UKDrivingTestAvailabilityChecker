@@ -92,15 +92,13 @@ _USER_AGENT = _build_user_agent()
 
 # Block detection: phrases that indicate an actual block page, not just
 # the presence of Imperva/Incapsula scripts (which are on every DVSA page).
+# These must be specific enough to avoid false positives on normal pages.
 _BLOCK_SIGNALS = [
-    "access denied",
+    "access to this page has been denied",
     "please verify you are a human",
     "bot detected",
-    "unusual traffic",
-    "automated access",
-    "request blocked",
-    "error code: 16",   # Imperva block error code
-    "incident id",      # Imperva block pages include an incident ID
+    "automated access to this resource",
+    "your request has been blocked",
 ]
 
 
@@ -208,28 +206,25 @@ async def inject_stealth_scripts(page):
     await page.evaluate(_STEALTH_JS)
 
 
-async def _wait_for_imperva_challenge(page, timeout: int = 30):
+async def _wait_for_page_ready(page, marker: str, timeout: int = 30):
     """
-    Wait for Imperva's JavaScript challenge to resolve.
+    Wait until the expected page content is loaded.
 
-    Imperva serves a challenge page that executes JS and sets cookies
-    before redirecting to the real page. We need to let this complete.
+    Args:
+        page: nodriver page/tab
+        marker: HTML element ID or text that indicates the page is ready
+        timeout: max seconds to wait
     """
     for _ in range(timeout // 2):
         try:
             source = await page.get_content()
-            source_lower = source.lower()
-            # Imperva challenge pages contain these markers
-            if "_Incapsula_Resource" in source or "b]({" in source:
-                log.info("Imperva JS challenge in progress, waiting...")
-                await asyncio.sleep(2)
-                continue
-            # Check if we've landed on the actual page
-            if "driving-licence-number" in source_lower or "login" in (page.url or ""):
-                return
+            if marker in source.lower():
+                return True
         except Exception:
             pass
         await asyncio.sleep(2)
+    log.warning(f"Timed out waiting for page marker: {marker}")
+    return False
 
 
 async def warm_session(page):
@@ -252,8 +247,8 @@ async def warm_session(page):
     await page.get(DVSA_LOGIN_URL)
     await human_sleep(3, 6)
 
-    # Step 3: Wait for Imperva JS challenge to complete (if any)
-    await _wait_for_imperva_challenge(page)
+    # Step 3: Wait for the login form to actually appear
+    await _wait_for_page_ready(page, "driving-licence-number")
     await human_sleep(1, 3)
 
     log.info("Session warming complete")
@@ -274,10 +269,11 @@ async def handle_queueit(page, max_wait: int = 600) -> bool:
         True if passed through or no queue, False if timed out.
     """
     try:
-        url = page.url or ""
-        source = await page.get_content()
+        url = (page.url or "").lower()
 
-        if "queue-it" not in url and "queueit" not in source.lower():
+        # Only detect Queue-it by URL redirect, not page source
+        # (DVSA pages reference Queue-it scripts even when not queuing)
+        if "queue-it" not in url and "queue.driverpracticaltest" not in url:
             return True
 
         log.info("Queue-it waiting room detected - waiting patiently...")
@@ -318,6 +314,8 @@ async def check_for_block(page) -> bool:
         for signal in _BLOCK_SIGNALS:
             if signal in source_lower:
                 log.warning(f"Block detected: '{signal}' found in page")
+                log.debug(f"Page URL: {page.url}")
+                log.debug(f"Page title: {source[:500]}")
                 return True
     except Exception as e:
         log.error(f"Block check error: {e}")
