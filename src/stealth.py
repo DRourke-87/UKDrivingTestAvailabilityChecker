@@ -69,17 +69,19 @@ async def create_browser(profile_name: str = "default") -> uc.Browser:
     # Headless mode (Pi has no display)
     config.headless = True
 
+    # Use Config attributes for options that nodriver manages directly
+    config.sandbox = False
+    config.lang = "en-GB"
+
     # Rotate user agent per session (but consistent within session)
     ua = random.choice(_USER_AGENTS)
 
     # Browser arguments
-    config.add_argument("--no-sandbox")
     config.add_argument("--disable-dev-shm-usage")
     config.add_argument("--disable-gpu")
     config.add_argument("--disable-software-rasterizer")
     config.add_argument("--disable-extensions")
     config.add_argument("--window-size=1366,768")
-    config.add_argument("--lang=en-GB")
     config.add_argument(f"--user-agent={ua}")
 
     # Memory optimization for Pi
@@ -193,7 +195,7 @@ async def handle_queueit(page, max_wait: int = 600) -> bool:
         if "queue-it" not in url and "queueit" not in source.lower():
             return True
 
-        log.info("Queue-it waiting room detected — waiting patiently...")
+        log.info("Queue-it waiting room detected - waiting patiently...")
         elapsed = 0
         while elapsed < max_wait:
             await asyncio.sleep(15)

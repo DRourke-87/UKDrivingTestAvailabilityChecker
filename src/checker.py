@@ -145,7 +145,7 @@ async def check_for_earlier_slot() -> dict:
                     await human_click(page, continue_btn)
                     await human_sleep(2, 4)
         except Exception:
-            log.info("No choice screen — direct date selection flow")
+            log.info("No choice screen - direct date selection flow")
 
         # ── Scrape available dates ──────────────────────────────────────
         await random_scroll(page)

@@ -55,7 +55,7 @@ _shutdown = False
 
 def _handle_sigterm(signum, frame):
     global _shutdown
-    log.info("SIGTERM received — shutting down after current check completes")
+    log.info("SIGTERM received - shutting down after current check completes")
     _shutdown = True
 
 
@@ -75,19 +75,19 @@ def in_operating_window() -> bool:
 # ── Main loop ──────────────────────────────────────────────────────────────
 
 async def run():
-    log.info("=== DVSA Slot Checker started ===")
-    log.info(f"Operating window: {WINDOW_START[0]:02d}:{WINDOW_START[1]:02d} – "
+    log.info("DVSA Slot Checker started")
+    log.info(f"Operating window: {WINDOW_START[0]:02d}:{WINDOW_START[1]:02d} - "
              f"{WINDOW_END[0]:02d}:{WINDOW_END[1]:02d}")
     log.info(f"Mean check interval: {CHECK_INTERVAL_MEAN}s")
 
     while not _shutdown:
         if not in_operating_window():
-            log.info("Outside operating window — sleeping 60s")
+            log.info("Outside operating window - sleeping 60s")
             await asyncio.sleep(60)
             continue
 
         # ── Run check ───────────────────────────────────────────────
-        log.info("── Starting slot check ──")
+        log.info("-- Starting slot check --")
         state = load_state()
 
         try:
@@ -145,11 +145,11 @@ async def run():
             interval *= backoff_multiplier
             log.info(f"Backoff active: {backoff_multiplier}x due to {blocks} consecutive blocks")
 
-        interval = max(120, min(1800, interval))  # Clamp: 2 min – 30 min
+        interval = max(120, min(1800, interval))  # Clamp: 2 min - 30 min
         log.info(f"Next check in {interval:.0f}s ({interval/60:.1f} min)")
         await asyncio.sleep(interval)
 
-    log.info("=== Scheduler shut down cleanly ===")
+    log.info("Scheduler shut down cleanly")
 
 
 def main():
