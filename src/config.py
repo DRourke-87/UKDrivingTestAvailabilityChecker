@@ -39,6 +39,9 @@ FROM_EMAIL = _require("FROM_EMAIL")
 FLASK_SECRET = os.getenv("FLASK_SECRET", "change_this")
 FLASK_PORT = int(os.getenv("FLASK_PORT", "5050"))
 
+# ── Browser ────────────────────────────────────────────────────────────────
+HEADLESS = os.getenv("HEADLESS", "true").lower() in ("true", "1", "yes")
+
 # ── Optional proxy ──────────────────────────────────────────────────────────
 PROXY_URL = os.getenv("PROXY_URL", "")
 

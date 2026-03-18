@@ -22,7 +22,7 @@ import asyncio
 
 import nodriver as uc
 
-from src.config import PROFILE_DIR, PROXY_URL, DVSA_HOME_URL, DVSA_LOGIN_URL
+from src.config import PROFILE_DIR, PROXY_URL, DVSA_HOME_URL, DVSA_LOGIN_URL, HEADLESS
 from src.human import human_sleep, random_scroll
 
 log = logging.getLogger(__name__)
@@ -118,8 +118,8 @@ async def create_browser(profile_name: str = "default") -> uc.Browser:
     # Persistent profile for session continuity
     config.user_data_dir = str(profile_path)
 
-    # Headless mode (Pi has no display)
-    config.headless = True
+    # Headless mode (Pi has no display; desktop can run non-headless)
+    config.headless = HEADLESS
 
     # Use Config attributes for options that nodriver manages directly
     config.sandbox = False
@@ -156,52 +156,77 @@ async def create_browser(profile_name: str = "default") -> uc.Browser:
     return browser
 
 
+_STEALTH_JS = """\
+// Ensure languages match
+Object.defineProperty(navigator, 'languages', {
+    get: () => ['en-GB', 'en-US', 'en']
+});
+
+// Chrome runtime object (missing in automation)
+if (!window.chrome) { window.chrome = {}; }
+if (!window.chrome.runtime) {
+    window.chrome.runtime = {
+        connect: function() {},
+        sendMessage: function() {},
+    };
+}
+
+// Permissions API (Imperva checks this)
+const originalQuery = window.navigator.permissions?.query;
+if (originalQuery) {
+    window.navigator.permissions.query = (parameters) =>
+        parameters.name === 'notifications'
+            ? Promise.resolve({ state: Notification.permission })
+            : originalQuery(parameters);
+}
+
+// WebGL vendor/renderer (headless returns different values)
+const getParameter = WebGLRenderingContext.prototype.getParameter;
+WebGLRenderingContext.prototype.getParameter = function(parameter) {
+    if (parameter === 37445) return 'Intel Inc.';
+    if (parameter === 37446) return 'Intel Iris OpenGL Engine';
+    return getParameter.call(this, parameter);
+};
+"""
+
+
 async def inject_stealth_scripts(page):
     """
-    Inject additional stealth patches via CDP.
+    Inject stealth patches via CDP Page.addScriptToEvaluateOnNewDocument.
 
-    nodriver already handles most automation detection, but we add
-    extra hardening for Imperva-specific checks.
+    Unlike page.evaluate(), this persists across navigations so the
+    patches are active on every page load including the DVSA login.
     """
-    await page.evaluate("""
-        // Ensure languages match
-        Object.defineProperty(navigator, 'languages', {
-            get: () => ['en-GB', 'en-US', 'en']
-        });
+    await page.send(
+        "Page.addScriptToEvaluateOnNewDocument",
+        source=_STEALTH_JS,
+    )
+    # Also run immediately on the current page context
+    await page.evaluate(_STEALTH_JS)
 
-        // Realistic plugin list (not empty like headless)
-        Object.defineProperty(navigator, 'plugins', {
-            get: () => {
-                const plugins = [
-                    { name: 'Chrome PDF Plugin', filename: 'internal-pdf-viewer' },
-                    { name: 'Chrome PDF Viewer', filename: 'mhjfbmdgcfjbbpaeojofohoefgiehjai' },
-                    { name: 'Native Client', filename: 'internal-nacl-plugin' },
-                ];
-                plugins.length = 3;
-                return plugins;
-            }
-        });
 
-        // Chrome runtime object (missing in automation)
-        if (!window.chrome) {
-            window.chrome = {};
-        }
-        if (!window.chrome.runtime) {
-            window.chrome.runtime = {
-                connect: function() {},
-                sendMessage: function() {},
-            };
-        }
+async def _wait_for_imperva_challenge(page, timeout: int = 30):
+    """
+    Wait for Imperva's JavaScript challenge to resolve.
 
-        // Permissions API (Imperva checks this)
-        const originalQuery = window.navigator.permissions?.query;
-        if (originalQuery) {
-            window.navigator.permissions.query = (parameters) =>
-                parameters.name === 'notifications'
-                    ? Promise.resolve({ state: Notification.permission })
-                    : originalQuery(parameters);
-        }
-    """)
+    Imperva serves a challenge page that executes JS and sets cookies
+    before redirecting to the real page. We need to let this complete.
+    """
+    for _ in range(timeout // 2):
+        try:
+            source = await page.get_content()
+            source_lower = source.lower()
+            # Imperva challenge pages contain these markers
+            if "_Incapsula_Resource" in source or "b]({" in source:
+                log.info("Imperva JS challenge in progress, waiting...")
+                await asyncio.sleep(2)
+                continue
+            # Check if we've landed on the actual page
+            if "driving-licence-number" in source_lower or "login" in (page.url or ""):
+                return
+        except Exception:
+            pass
+        await asyncio.sleep(2)
 
 
 async def warm_session(page):
@@ -209,7 +234,7 @@ async def warm_session(page):
     Visit pages in a natural sequence before hitting the login page.
 
     This builds a realistic Referer chain and sets cookies that
-    a real user would have. Imperva tracks navigation patterns —
+    a real user would have. Imperva tracks navigation patterns -
     going directly to a login page without prior browsing is suspicious.
     """
     log.info("Warming session with natural navigation sequence")
@@ -222,7 +247,11 @@ async def warm_session(page):
 
     # Step 2: Navigate to DVSA login (natural transition)
     await page.get(DVSA_LOGIN_URL)
-    await human_sleep(2, 4)
+    await human_sleep(3, 6)
+
+    # Step 3: Wait for Imperva JS challenge to complete (if any)
+    await _wait_for_imperva_challenge(page)
+    await human_sleep(1, 3)
 
     log.info("Session warming complete")
 
@@ -271,11 +300,18 @@ async def check_for_block(page) -> bool:
     """
     Detect Imperva/Incapsula or generic WAF block pages.
 
-    Returns True if a block is detected.
+    Only returns True for actual block pages, not normal DVSA pages
+    that happen to contain Imperva scripts.
     """
     try:
         source = await page.get_content()
         source_lower = source.lower()
+
+        # If the page has DVSA form fields, it's not a block page
+        if "driving-licence-number" in source_lower:
+            return False
+
+        # Check for block signals
         for signal in _BLOCK_SIGNALS:
             if signal in source_lower:
                 log.warning(f"Block detected: '{signal}' found in page")
