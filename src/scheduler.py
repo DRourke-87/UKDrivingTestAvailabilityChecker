@@ -18,10 +18,12 @@ from datetime import datetime
 
 from src.config import (
     CHECK_INTERVAL_MEAN, WINDOW_START, WINDOW_END, LOG_DIR,
+    CLEAR_PROFILES_ON_START,
 )
 from src.checker import check_for_earlier_slot
 from src.notifier import send_notification
 from src.state import load_state, save_state
+from src.stealth import clear_profiles
 from src.human import poisson_sleep_duration, time_of_day_multiplier
 
 # ── Logging setup ───────────────────────────────────────────────────────────
@@ -79,6 +81,10 @@ async def run():
     log.info(f"Operating window: {WINDOW_START[0]:02d}:{WINDOW_START[1]:02d} - "
              f"{WINDOW_END[0]:02d}:{WINDOW_END[1]:02d}")
     log.info(f"Mean check interval: {CHECK_INTERVAL_MEAN}s")
+
+    # Clear stale browser profiles to avoid issues from expired cookies
+    if CLEAR_PROFILES_ON_START:
+        clear_profiles()
 
     while not _shutdown:
         if not in_operating_window():

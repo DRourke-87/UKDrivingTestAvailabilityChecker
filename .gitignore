@@ -4,9 +4,12 @@
 # Runtime state
 state.json
 state.json.tmp
+imperva_cookies.json
+imperva_cookies.tmp
 
-# Logs
+# Logs and HAR captures
 logs/
+*.har
 
 # Browser profiles
 profiles/

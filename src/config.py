@@ -41,6 +41,8 @@ FLASK_PORT = int(os.getenv("FLASK_PORT", "5050"))
 
 # ── Browser ────────────────────────────────────────────────────────────────
 HEADLESS = os.getenv("HEADLESS", "true").lower() in ("true", "1", "yes")
+CLEAR_PROFILES_ON_START = os.getenv("CLEAR_PROFILES_ON_START", "true").lower() in ("true", "1", "yes")
+CAPTURE_HAR = os.getenv("CAPTURE_HAR", "false").lower() in ("true", "1", "yes")
 
 # ── Optional proxy ──────────────────────────────────────────────────────────
 PROXY_URL = os.getenv("PROXY_URL", "")
@@ -49,6 +51,7 @@ PROXY_URL = os.getenv("PROXY_URL", "")
 STATE_FILE = PROJECT_ROOT / "state.json"
 LOG_DIR = PROJECT_ROOT / "logs"
 PROFILE_DIR = PROJECT_ROOT / "profiles"
+COOKIE_SEED_FILE = PROJECT_ROOT / "imperva_cookies.json"
 
 # ── DVSA URL ────────────────────────────────────────────────────────────────
 DVSA_LOGIN_URL = "https://driverpracticaltest.dvsa.gov.uk/login"

@@ -158,63 +158,124 @@ async def extract_and_solve_hcaptcha(page) -> bool:
     """
     Detect hCaptcha on page, extract sitekey, solve, and inject token.
 
-    Returns True if captcha was solved and injected, False if no captcha
-    found or solve failed.
+    Handles two scenarios:
+    1. Imperva's standalone captcha gate page — has data-sitekey on a
+       .h-captcha div and uses onCaptchaFinished callback to POST the
+       token to /_Incapsula_Resource then reload.
+    2. hCaptcha embedded in the DVSA login form — iframe with sitekey
+       in src, hidden textarea fields for the token.
+
+    Returns True if captcha was solved/submitted or no captcha present.
+    Returns False if solve failed.
     """
     try:
         source = await page.get_content()
-        if "hcaptcha" not in source.lower():
+        source_lower = source.lower()
+
+        # Check for any hCaptcha presence
+        has_hcaptcha = (
+            "hcaptcha" in source_lower
+            or "h-captcha" in source_lower
+            or "data-sitekey" in source_lower
+        )
+        if not has_hcaptcha:
             return True  # No captcha present
 
         log.info("hCaptcha detected on page")
 
-        # Extract sitekey from iframe src or data attribute
-        site_key = None
-
-        # Try iframe src
-        site_key = await page.evaluate("""
+        # Extract sitekey and callback name
+        captcha_info = await page.evaluate("""
             (() => {
-                const iframe = document.querySelector("iframe[src*='hcaptcha']");
-                if (iframe) {
-                    const match = iframe.src.match(/sitekey=([^&]+)/);
-                    if (match) return match[1];
+                const info = {sitekey: null, callback: null, isImperva: false};
+
+                // Check for Imperva captcha page (.h-captcha div with data-sitekey)
+                const hcDiv = document.querySelector(".h-captcha[data-sitekey]");
+                if (hcDiv) {
+                    info.sitekey = hcDiv.getAttribute("data-sitekey");
+                    info.callback = hcDiv.getAttribute("data-callback") || null;
+                    info.isImperva = typeof onCaptchaFinished === "function";
                 }
-                const el = document.querySelector("[data-sitekey]");
-                if (el) return el.getAttribute("data-sitekey");
-                return null;
+
+                // Fallback: check for iframe with sitekey in src
+                if (!info.sitekey) {
+                    const iframe = document.querySelector("iframe[src*='hcaptcha']");
+                    if (iframe) {
+                        const match = iframe.src.match(/sitekey=([^&]+)/);
+                        if (match) info.sitekey = match[1];
+                    }
+                }
+
+                // Fallback: any element with data-sitekey
+                if (!info.sitekey) {
+                    const el = document.querySelector("[data-sitekey]");
+                    if (el) info.sitekey = el.getAttribute("data-sitekey");
+                }
+
+                return JSON.stringify(info);
             })()
         """)
 
+        info = json.loads(captcha_info)
+        site_key = info.get("sitekey")
+        callback_name = info.get("callback")
+        is_imperva = info.get("isImperva", False)
+
         if not site_key:
-            log.warning("Could not extract hCaptcha sitekey")
+            log.warning("Could not extract hCaptcha sitekey from page")
+            log.debug(f"Page source snippet: {source[:500]}")
             return False
 
         page_url = page.url
-        log.info(f"Solving hCaptcha (sitekey: {site_key[:12]}...)")
+        log.info(f"Solving hCaptcha (sitekey: {site_key[:12]}..., "
+                 f"callback: {callback_name}, imperva: {is_imperva})")
 
         token = solve_hcaptcha(site_key, page_url)
+        log.info(f"Got captcha token ({len(token)} chars): {token[:30]}...")
 
-        # Inject the solved token (use json.dumps to safely escape the value)
+        # Inject the solved token and trigger the appropriate callback
         safe_token = json.dumps(token)
-        await page.evaluate(f"""
+        inject_result = await page.evaluate(f"""
             (() => {{
                 const token = {safe_token};
-                const resp = document.querySelector("[name='h-captcha-response']");
-                if (resp) resp.value = token;
-                const grecap = document.querySelector("[name='g-recaptcha-response']");
-                if (grecap) grecap.value = token;
-                // Trigger hCaptcha callback if registered
-                if (typeof hcaptchaCallback === "function") hcaptchaCallback(token);
-                // Also try dispatching event
-                const textarea = document.querySelector("textarea[name='h-captcha-response']");
-                if (textarea) {{
-                    textarea.value = token;
-                    textarea.dispatchEvent(new Event('input', {{ bubbles: true }}));
+                const result = {{filled: 0, callback: null}};
+
+                // Fill in all known token fields
+                document.querySelectorAll(
+                    "[name='h-captcha-response'], [name='g-recaptcha-response']"
+                ).forEach(el => {{ el.value = token; result.filled++; }});
+
+                // Also set via hcaptcha API if available
+                if (typeof hcaptcha !== "undefined" && hcaptcha.setResponse) {{
+                    try {{ hcaptcha.setResponse(token); result.filled++; }} catch(e) {{}}
                 }}
+
+                // Trigger the page's registered callback
+                // Imperva uses onCaptchaFinished; other pages may use
+                // the data-callback attribute or hcaptcha's own callback
+                if (typeof onCaptchaFinished === "function") {{
+                    onCaptchaFinished(token);
+                    result.callback = "onCaptchaFinished";
+                }} else if (typeof hcaptchaCallback === "function") {{
+                    hcaptchaCallback(token);
+                    result.callback = "hcaptchaCallback";
+                }} else {{
+                    // Try the data-callback attribute name
+                    const cb = document.querySelector("[data-callback]");
+                    if (cb) {{
+                        const cbName = cb.getAttribute("data-callback");
+                        if (typeof window[cbName] === "function") {{
+                            window[cbName](token);
+                            result.callback = cbName;
+                        }}
+                    }}
+                }}
+
+                return JSON.stringify(result);
             }})()
         """)
+        log.info(f"Token injection result: {inject_result}")
 
-        log.info("hCaptcha token injected successfully")
+        log.info("hCaptcha token injected and callback triggered")
         return True
 
     except CaptchaSolveError as e:
