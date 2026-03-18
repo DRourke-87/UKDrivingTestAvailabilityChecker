@@ -10,10 +10,10 @@ WorkingDirectory=/home/pi/dvsa-checker
 ExecStart=/home/pi/dvsa-checker/venv/bin/python -m src.scheduler
 Restart=always
 RestartSec=30
- EnvironmentFile=/home/pi/dvsa-checker/.env
+EnvironmentFile=/home/pi/dvsa-checker/.env
 
 # Memory limit — kill and restart if Chrome leaks
- MemoryMax=800M
+MemoryMax=800M
 
 # Allow graceful shutdown
 TimeoutStopSec=30

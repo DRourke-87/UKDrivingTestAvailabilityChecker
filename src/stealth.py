@@ -39,7 +39,7 @@ _USER_AGENTS = [
 _BLOCK_SIGNALS = [
     "imperva", "incapsula", "access denied",
     "please verify you are a human", "bot detected",
-    "unusual traffic", "security check", "blocked",
+    "unusual traffic", "security check",
     "automated access", "request blocked",
 ]
 

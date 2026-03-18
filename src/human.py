@@ -177,7 +177,7 @@ async def human_type(element, text: str):
             delay += random.uniform(0.3, 0.7)
 
         # Rare typo simulation (~2%) — type wrong char, pause, backspace, correct
-        if random.random() < 0.02 and char.isalnum():
+        if random.random() < 0.02 and char.isalpha():
             wrong = chr(ord(char) + random.choice([-1, 1]))
             await element.send_keys(wrong)
             await asyncio.sleep(random.uniform(0.1, 0.3))

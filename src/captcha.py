@@ -9,6 +9,7 @@ The solver tries backends in order. If one fails, it falls through
 to the next. This maximizes reliability while keeping costs low.
 """
 
+import json
 import os
 import time
 import logging
@@ -85,7 +86,7 @@ def _solve_twocaptcha(site_key: str, page_url: str) -> str:
     log.info("Attempting hCaptcha solve via 2Captcha...")
 
     # Submit captcha
-    resp = requests.post("http://2captcha.com/in.php", data={
+    resp = requests.post("https://2captcha.com/in.php", data={
         "key": TWOCAPTCHA_API_KEY,
         "method": "hcaptcha",
         "sitekey": site_key,
@@ -102,7 +103,7 @@ def _solve_twocaptcha(site_key: str, page_url: str) -> str:
     # Poll for result (human workers: 15-90s typical)
     for _ in range(30):
         time.sleep(10)
-        result = requests.get("http://2captcha.com/res.php", params={
+        result = requests.get("https://2captcha.com/res.php", params={
             "key": TWOCAPTCHA_API_KEY,
             "action": "get",
             "id": captcha_id,
@@ -193,19 +194,21 @@ async def extract_and_solve_hcaptcha(page) -> bool:
 
         token = solve_hcaptcha(site_key, page_url)
 
-        # Inject the solved token
+        # Inject the solved token (use json.dumps to safely escape the value)
+        safe_token = json.dumps(token)
         await page.evaluate(f"""
             (() => {{
+                const token = {safe_token};
                 const resp = document.querySelector("[name='h-captcha-response']");
-                if (resp) resp.value = "{token}";
+                if (resp) resp.value = token;
                 const grecap = document.querySelector("[name='g-recaptcha-response']");
-                if (grecap) grecap.value = "{token}";
+                if (grecap) grecap.value = token;
                 // Trigger hCaptcha callback if registered
-                if (typeof hcaptchaCallback === "function") hcaptchaCallback("{token}");
+                if (typeof hcaptchaCallback === "function") hcaptchaCallback(token);
                 // Also try dispatching event
                 const textarea = document.querySelector("textarea[name='h-captcha-response']");
                 if (textarea) {{
-                    textarea.value = "{token}";
+                    textarea.value = token;
                     textarea.dispatchEvent(new Event('input', {{ bubbles: true }}));
                 }}
             }})()
