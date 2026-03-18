@@ -75,12 +75,20 @@ def _detect_chrome_version() -> str:
 
 _CHROME_MAJOR = _detect_chrome_version()
 
-# Build user agents matching the installed Chrome version
-_USER_AGENTS = [
-    f"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/{_CHROME_MAJOR}.0.0.0 Safari/537.36",
-    f"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/{_CHROME_MAJOR}.0.0.0 Safari/537.36",
-    f"Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/{_CHROME_MAJOR}.0.0.0 Safari/537.36",
-]
+# Build user agent matching the installed Chrome version and actual platform
+def _build_user_agent() -> str:
+    system = platform.system()
+    if system == "Windows":
+        os_token = "Windows NT 10.0; Win64; x64"
+    elif system == "Darwin":
+        os_token = "Macintosh; Intel Mac OS X 10_15_7"
+    else:
+        arch = platform.machine()
+        os_token = f"X11; Linux {arch}"
+    return f"Mozilla/5.0 ({os_token}) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/{_CHROME_MAJOR}.0.0.0 Safari/537.36"
+
+
+_USER_AGENT = _build_user_agent()
 
 # Block detection: phrases that indicate an actual block page, not just
 # the presence of Imperva/Incapsula scripts (which are on every DVSA page).
@@ -125,16 +133,13 @@ async def create_browser(profile_name: str = "default") -> uc.Browser:
     config.sandbox = False
     config.lang = "en-GB"
 
-    # Rotate user agent per session (but consistent within session)
-    ua = random.choice(_USER_AGENTS)
-
     # Browser arguments
     config.add_argument("--disable-dev-shm-usage")
     config.add_argument("--disable-gpu")
     config.add_argument("--disable-software-rasterizer")
     config.add_argument("--disable-extensions")
     config.add_argument("--window-size=1366,768")
-    config.add_argument(f"--user-agent={ua}")
+    config.add_argument(f"--user-agent={_USER_AGENT}")
 
     # Memory optimization (aggressive settings only on Linux/Pi)
     if platform.system() == "Linux":
@@ -151,7 +156,7 @@ async def create_browser(profile_name: str = "default") -> uc.Browser:
         config.add_argument(f"--proxy-server={PROXY_URL}")
 
     browser = await uc.start(config)
-    log.info(f"Browser launched (profile: {profile_name}, UA: {ua[:50]}...)")
+    log.info(f"Browser launched (profile: {profile_name}, UA: {_USER_AGENT[:50]}...)")
 
     return browser
 
@@ -197,10 +202,8 @@ async def inject_stealth_scripts(page):
     Unlike page.evaluate(), this persists across navigations so the
     patches are active on every page load including the DVSA login.
     """
-    await page.send(
-        "Page.addScriptToEvaluateOnNewDocument",
-        source=_STEALTH_JS,
-    )
+    import nodriver.cdp.page as cdp_page
+    await page.send(cdp_page.add_script_to_evaluate_on_new_document(_STEALTH_JS))
     # Also run immediately on the current page context
     await page.evaluate(_STEALTH_JS)
 
