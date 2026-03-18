@@ -132,10 +132,40 @@ async def check_for_earlier_slot() -> dict:
         await random_scroll(page)
         await human_sleep(1.5, 3)
 
-        # Look for "Change" link
-        change_link = await page.find("Change", best_match=True, timeout=15)
+        # Log page content for debugging
+        manage_source = await page.get_content()
+        log.info(f"Manage page length: {len(manage_source)} chars")
+
+        # Extract all links/buttons visible on the page for debugging
+        links_text = await page.evaluate("""
+            (() => {
+                const items = [];
+                document.querySelectorAll('a, button, [role="button"]').forEach(el => {
+                    const text = el.textContent.trim().substring(0, 80);
+                    const href = el.getAttribute('href') || '';
+                    if (text) items.push(text + (href ? ' -> ' + href : ''));
+                });
+                return items.join(' | ');
+            })()
+        """)
+        log.info(f"Page links/buttons: {links_text[:500]}")
+
+        # Try multiple strategies to find the change date link
+        change_link = None
+
+        # Strategy 1: Look for link containing "change" by href
+        change_link = await page.select("a[href*='change']", timeout=5)
+
+        # Strategy 2: Look for link containing "date" in href
         if not change_link:
-            result["message"] = "Could not find 'Change' link on booking page"
+            change_link = await page.select("a[href*='date']", timeout=3)
+
+        # Strategy 3: Text-based search
+        if not change_link:
+            change_link = await page.find("Change", best_match=True, timeout=5)
+
+        if not change_link:
+            result["message"] = f"Could not find 'Change' link on booking page. Links found: {links_text[:200]}"
             return result
 
         await human_click(page, change_link)
