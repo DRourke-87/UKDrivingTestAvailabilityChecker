@@ -116,6 +116,32 @@ async def check_for_earlier_slot() -> dict:
         post_login_url = page.url or ""
         log.info(f"Post-login URL: {post_login_url}")
 
+        # Capture any error messages or important text visible on page
+        page_text = await page.evaluate("""
+            (() => {
+                // Check for error/warning banners
+                const errors = document.querySelectorAll(
+                    '.error-summary, .error-message, .alert, .warning, ' +
+                    '[class*="error"], [class*="Error"], [role="alert"], ' +
+                    '.govuk-error-summary, .govuk-error-message, #error-summary-title'
+                );
+                const texts = [];
+                errors.forEach(el => {
+                    const t = el.textContent.trim().substring(0, 200);
+                    if (t) texts.push(t);
+                });
+                if (texts.length === 0) {
+                    // Fallback: grab the main page heading and first paragraph
+                    const h1 = document.querySelector('h1');
+                    if (h1) texts.push('H1: ' + h1.textContent.trim());
+                    const main = document.querySelector('main, #main-content, .content');
+                    if (main) texts.push('Main: ' + main.textContent.trim().substring(0, 300));
+                }
+                return texts.join(' | ');
+            })()
+        """)
+        log.info(f"Post-login page content: {page_text[:500]}")
+
         if not await handle_queueit(page):
             result["message"] = "Stuck in Queue-it after login"
             return result
