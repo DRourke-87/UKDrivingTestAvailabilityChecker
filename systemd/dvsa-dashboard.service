@@ -1,0 +1,16 @@
+[Unit]
+Description=DVSA Slot Checker Dashboard
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=/home/pi/dvsa-checker
+ExecStart=/home/pi/dvsa-checker/venv/bin/python dashboard/app.py
+Restart=always
+RestartSec=10
+EnvironmentFile=/home/pi/dvsa-checker/.env
+
+[Install]
+WantedBy=multi-user.target
